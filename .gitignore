@@ -1,0 +1,24 @@
+# env
+.env.local
+.env
+.env.local.example
+
+
+# python
+venv/
+__pycache__/
+*.pyc
+.python-version
+
+# node
+node_modules/
+.next/
+
+# rag index files (large, rebuild on server)
+jaro_chunks.json
+jaro_chunks_indexed.json
+jaro_index.faiss
+
+# os
+.DS_Store
+Thumbs.db
