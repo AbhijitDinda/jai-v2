@@ -1,10 +1,11 @@
 import logging
 import os
 from dotenv import load_dotenv
-from livekit.agents import AutoSubscribe, JobContext, JobProcess, WorkerOptions, cli
+from livekit.agents import JobContext, JobProcess, WorkerOptions, cli
 from livekit.agents.voice import Agent, AgentSession
 from livekit.plugins import silero, elevenlabs
 from livekit.plugins.openai import STT, LLM
+from livekit.agents import llm
 
 load_dotenv(dotenv_path=".env.local")
 
@@ -24,24 +25,23 @@ def prewarm(proc: JobProcess):
     proc.userdata["vad"] = silero.VAD.load()
 
 
-def make_jai_agent(query: str = "") -> Agent:
-    if query:
-        try:
-            from rag import retrieve
-            context = retrieve(query)
-            instructions = f"{BASE_INSTRUCTIONS}\n\nCONTEXT:\n{context}"
-        except Exception as e:
-            logger.warning(f"RAG retrieval failed: {e}")
-            instructions = BASE_INSTRUCTIONS
-    else:
-        instructions = BASE_INSTRUCTIONS
+class JaiAgent(Agent):
+    def __init__(self):
+        super().__init__(instructions=BASE_INSTRUCTIONS)
 
-    return Agent(instructions=instructions)
+    async def on_user_turn_completed(self, turn_ctx: llm.ChatContext, new_message: llm.ChatMessage) -> None:
+        query = new_message.text_content
+        if query:
+            try:
+                from rag import retrieve
+                context = retrieve(query)
+                new_message.content = [f"{query}\n\nCONTEXT:\n{context}"]
+            except Exception as e:
+                logger.warning(f"RAG retrieval failed: {e}")
 
 
 async def entrypoint(ctx: JobContext):
     logger.info(f"connecting to room {ctx.room.name}")
-    await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)
 
     session = AgentSession(
         vad=ctx.proc.userdata["vad"],
@@ -50,21 +50,8 @@ async def entrypoint(ctx: JobContext):
         tts=elevenlabs.TTS(),
     )
 
-    async def before_llm_cb(agent: Agent, chat_ctx):
-        # Get last user message to use as RAG query
-        user_messages = [m for m in chat_ctx.messages if m.role == "user"]
-        if user_messages:
-            query = str(user_messages[-1].content)
-            try:
-                from rag import retrieve
-                context = retrieve(query)
-                # Inject context into system instructions
-                agent._instructions = f"{BASE_INSTRUCTIONS}\n\nCONTEXT:\n{context}"
-            except Exception as e:
-                logger.warning(f"RAG retrieval failed: {e}")
-
     await session.start(
-        agent=Agent(instructions=BASE_INSTRUCTIONS),
+        agent=JaiAgent(),
         room=ctx.room,
     )
 
